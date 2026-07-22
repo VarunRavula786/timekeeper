@@ -253,6 +253,7 @@
   // ---------- constants ----------
   var STORAGE_KEY = "timekeeper_state_v1";
   var CLIENT_ID_KEY = "tk_google_client_id";
+  var DEFAULT_CLIENT_ID = "180689405944-r11girejiituhjjja3ltnf03ep3niqik.apps.googleusercontent.com";
   var SCOPE = "https://www.googleapis.com/auth/drive.file";
   var POLL_MS = 90000;
   var COMPACT_EVENT_THRESHOLD = 15;
@@ -374,7 +375,7 @@
   var pollTimer = null;
   var connecting = false;
 
-  function getClientId() { return (localStorage.getItem(CLIENT_ID_KEY) || "").trim(); }
+  function getClientId() { return (localStorage.getItem(CLIENT_ID_KEY) || "").trim() || DEFAULT_CLIENT_ID; }
   function setClientId(id) { localStorage.setItem(CLIENT_ID_KEY, id.trim()); }
   function hasValidToken() { return !!accessToken && Date.now() < tokenExpiryMs; }
 
