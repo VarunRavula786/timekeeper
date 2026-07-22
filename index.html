@@ -426,7 +426,7 @@
     if (!tc) { showSetupIfNeeded(); return; }
     connecting = true;
     setSyncPill("syncing", "Connecting…");
-    tc.requestAccessToken({ prompt: "" });
+    tc.requestAccessToken({ prompt: "select_account" });
   }
 
   function driveFetch(url, options) {
