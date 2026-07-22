@@ -93,7 +93,7 @@
 
   .stats { display: flex; flex-direction: column; gap: 12px; }
   .stats-group__label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin: 0 0 6px 2px; }
-  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stats-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .stat-tile { padding: 14px 10px; text-align: center; }
   .stat-tile__value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 700; }
   .stat-tile__label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-top: 4px; }
@@ -187,24 +187,27 @@
       <h3 class="stats-group__label">Past 7 days</h3>
       <div class="stats-row">
         <div class="card stat-tile"><div class="stat-tile__value" id="statCount7">0</div><div class="stat-tile__label">Sessions</div></div>
-        <div class="card stat-tile"><div class="stat-tile__value" id="statTotal7">0s</div><div class="stat-tile__label">Total time</div></div>
-        <div class="card stat-tile"><div class="stat-tile__value" id="statAvg7">0s</div><div class="stat-tile__label">Average</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statTotal7">0m</div><div class="stat-tile__label">Total time</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statSessionAvg7">0m</div><div class="stat-tile__label">Session avg</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statDayAvg7">0m</div><div class="stat-tile__label">Day avg</div></div>
       </div>
     </div>
     <div class="stats-group">
       <h3 class="stats-group__label">Past 30 days</h3>
       <div class="stats-row">
         <div class="card stat-tile"><div class="stat-tile__value" id="statCount30">0</div><div class="stat-tile__label">Sessions</div></div>
-        <div class="card stat-tile"><div class="stat-tile__value" id="statTotal30">0s</div><div class="stat-tile__label">Total time</div></div>
-        <div class="card stat-tile"><div class="stat-tile__value" id="statAvg30">0s</div><div class="stat-tile__label">Average</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statTotal30">0m</div><div class="stat-tile__label">Total time</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statSessionAvg30">0m</div><div class="stat-tile__label">Session avg</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statDayAvg30">0m</div><div class="stat-tile__label">Day avg</div></div>
       </div>
     </div>
     <div class="stats-group">
       <h3 class="stats-group__label">All time</h3>
       <div class="stats-row">
         <div class="card stat-tile"><div class="stat-tile__value" id="statCountAll">0</div><div class="stat-tile__label">Sessions</div></div>
-        <div class="card stat-tile"><div class="stat-tile__value" id="statTotalAll">0s</div><div class="stat-tile__label">Total time</div></div>
-        <div class="card stat-tile"><div class="stat-tile__value" id="statAvgAll">0s</div><div class="stat-tile__label">Average</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statTotalAll">0m</div><div class="stat-tile__label">Total time</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statSessionAvgAll">0m</div><div class="stat-tile__label">Session avg</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statDayAvgAll">0m</div><div class="stat-tile__label">Day avg</div></div>
       </div>
     </div>
   </section>
@@ -293,13 +296,11 @@
     return pad2(m) + ":" + pad2(s);
   }
   function formatDuration(seconds) {
-    seconds = Math.max(0, Math.round(seconds || 0));
-    var h = Math.floor(seconds / 3600);
-    var m = Math.floor((seconds % 3600) / 60);
-    var s = seconds % 60;
-    if (h > 0) return h + "h " + pad2(m) + "m " + pad2(s) + "s";
-    if (m > 0) return m + "m " + pad2(s) + "s";
-    return s + "s";
+    var totalMin = Math.max(0, Math.round((seconds || 0) / 60));
+    var h = Math.floor(totalMin / 60);
+    var m = totalMin % 60;
+    if (h > 0) return h + "h " + pad2(m) + "m";
+    return m + "m";
   }
   function toDatetimeLocal(iso) {
     var d = new Date(iso);
@@ -707,20 +708,34 @@
   }
 
   // ---------- rendering ----------
-  function fillStatGroup(suffix, entries) {
+  function daysBetweenInclusive(startIso, endDate) {
+    var start = new Date(startIso);
+    var startMid = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    var endMid = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+    return Math.round((endMid - startMid) / 86400000) + 1;
+  }
+  function fillStatGroup(suffix, entries, dayCount) {
     var total = entries.reduce(function (sum, e) { return sum + (e.record.durationSeconds || 0); }, 0);
     document.getElementById("statCount" + suffix).textContent = entries.length;
     document.getElementById("statTotal" + suffix).textContent = formatDuration(total);
-    document.getElementById("statAvg" + suffix).textContent = entries.length ? formatDuration(total / entries.length) : "0s";
+    document.getElementById("statSessionAvg" + suffix).textContent = entries.length ? formatDuration(total / entries.length) : "0m";
+    document.getElementById("statDayAvg" + suffix).textContent = dayCount > 0 ? formatDuration(total / dayCount) : "0m";
   }
   function renderStats() {
     var entries = activeEntries();
     var now = Date.now();
     var cutoff7 = now - 7 * 86400000;
     var cutoff30 = now - 30 * 86400000;
-    fillStatGroup("7", entries.filter(function (e) { return new Date(e.record.startedAt).getTime() >= cutoff7; }));
-    fillStatGroup("30", entries.filter(function (e) { return new Date(e.record.startedAt).getTime() >= cutoff30; }));
-    fillStatGroup("All", entries);
+    var entries7 = entries.filter(function (e) { return new Date(e.record.startedAt).getTime() >= cutoff7; });
+    var entries30 = entries.filter(function (e) { return new Date(e.record.startedAt).getTime() >= cutoff30; });
+    var daysAll = 0;
+    if (entries.length) {
+      var earliest = entries.reduce(function (min, e) { return new Date(e.record.startedAt) < new Date(min.record.startedAt) ? e : min; });
+      daysAll = daysBetweenInclusive(earliest.record.startedAt, new Date());
+    }
+    fillStatGroup("7", entries7, 7);
+    fillStatGroup("30", entries30, 30);
+    fillStatGroup("All", entries, daysAll);
   }
   function renderSessionList() {
     var list = document.getElementById("sessionList");
