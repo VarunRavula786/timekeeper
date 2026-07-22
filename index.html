@@ -733,8 +733,8 @@
       var earliest = entries.reduce(function (min, e) { return new Date(e.record.startedAt) < new Date(min.record.startedAt) ? e : min; });
       daysAll = daysBetweenInclusive(earliest.record.startedAt, new Date());
     }
-    fillStatGroup("7", entries7, 7);
-    fillStatGroup("30", entries30, 30);
+    fillStatGroup("7", entries7, Math.min(7, daysAll));
+    fillStatGroup("30", entries30, Math.min(30, daysAll));
     fillStatGroup("All", entries, daysAll);
   }
   function renderSessionList() {
