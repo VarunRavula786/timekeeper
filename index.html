@@ -374,6 +374,7 @@
   var tokenClient = null;
   var pollTimer = null;
   var connecting = false;
+  var silentAttempt = false;
 
   function getClientId() { return (localStorage.getItem(CLIENT_ID_KEY) || "").trim() || DEFAULT_CLIENT_ID; }
   function setClientId(id) { localStorage.setItem(CLIENT_ID_KEY, id.trim()); }
@@ -407,10 +408,17 @@
       client_id: clientId,
       scope: SCOPE,
       callback: function (resp) {
+        var wasSilent = silentAttempt;
+        silentAttempt = false;
         connecting = false;
         if (resp.error) {
-          setSyncPill("error", "Not connected");
-          showBanner("Couldn't connect to Google Drive (" + resp.error + ").", "Try again", connectDrive);
+          if (wasSilent) {
+            // background auto-reconnect found nothing to silently reuse — fall back quietly, no error UI
+            showSetupIfNeeded();
+          } else {
+            setSyncPill("error", "Not connected");
+            showBanner("Couldn't connect to Google Drive (" + resp.error + ").", "Try again", connectDrive);
+          }
           return;
         }
         accessToken = resp.access_token;
@@ -425,9 +433,20 @@
   function connectDrive() {
     var tc = ensureTokenClient();
     if (!tc) { showSetupIfNeeded(); return; }
+    silentAttempt = false;
     connecting = true;
     setSyncPill("syncing", "Connecting…");
     tc.requestAccessToken({ prompt: "select_account" });
+  }
+  function trySilentReconnect(attemptsLeft) {
+    if (!window.google || !google.accounts || !google.accounts.oauth2) {
+      if (attemptsLeft > 0) setTimeout(function () { trySilentReconnect(attemptsLeft - 1); }, 300);
+      return;
+    }
+    var tc = ensureTokenClient();
+    if (!tc) return;
+    silentAttempt = true;
+    tc.requestAccessToken({ prompt: "" });
   }
 
   function driveFetch(url, options) {
@@ -863,6 +882,7 @@
   renderReadout();
   renderAll();
   showSetupIfNeeded();
+  trySilentReconnect(15);
 })();
 </script>
 </body>
