@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Timekeeper</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Personal stopwatch and countdown timer with session stats and Google Drive sync.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%23e8a33d' stroke-width='3'/%3E%3C/svg%3E">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root {
+    --bg: #eef1f3;
+    --bg-elevated: #ffffff;
+    --text: #14161b;
+    --text-secondary: #5b6470;
+    --border: #dbe1e6;
+    --accent: #b8672a;
+    --accent-contrast: #ffffff;
+    --accent-soft: #f1e0cc;
+    --danger: #b3412c;
+    --danger-soft: #f5e0da;
+    --success: #2f7a51;
+    --success-soft: #dcefe3;
+    --warn: #9c7a10;
+    --warn-soft: #f2e6bf;
+    --shadow: 0 1px 2px rgba(20, 22, 27, 0.06), 0 8px 24px -12px rgba(20, 22, 27, 0.18);
+    --radius: 14px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161b; --bg-elevated: #1c1f26; --text: #edeff2; --text-secondary: #9ba3ae;
+      --border: #2a2e36; --accent: #e8a33d; --accent-contrast: #1c1408; --accent-soft: rgba(232, 163, 61, 0.16);
+      --danger: #e2725a; --danger-soft: rgba(226, 114, 90, 0.16); --success: #5fbe85; --success-soft: rgba(95, 190, 133, 0.16);
+      --warn: #d9b44a; --warn-soft: rgba(217, 180, 74, 0.16);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -14px rgba(0, 0, 0, 0.55);
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+  }
+  .app { max-width: 560px; margin: 0 auto; padding: 20px 16px 64px; display: flex; flex-direction: column; gap: 20px; }
+  .app__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand__mark { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); position: relative; top: -1px; }
+  .brand__name { font-size: 15px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0; color: var(--text); }
+  .sync-pill { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px 5px 8px; white-space: nowrap; }
+  .sync-pill__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); flex: none; }
+  .sync-pill[data-state="synced"] .sync-pill__dot { background: var(--success); }
+  .sync-pill[data-state="syncing"] .sync-pill__dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .sync-pill[data-state="error"] .sync-pill__dot { background: var(--danger); }
+  .sync-pill[data-state="not_connected"] .sync-pill__dot,
+  .sync-pill[data-state="offline"] .sync-pill__dot { background: var(--warn); }
+  @media (prefers-reduced-motion: reduce) { .sync-pill__dot { animation: none !important; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+
+  .setup-card { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .setup-card h2 { font-size: 14px; margin: 0; }
+  .setup-card p { font-size: 12.5px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
+  .setup-card .row { display: flex; gap: 8px; }
+  .setup-card input { flex: 1; font-family: inherit; font-size: 14px; padding: 9px 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+
+  .timer-card { padding: 22px 20px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .mode-toggle { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 3px; }
+  .mode-toggle__btn { flex: 1; border: none; background: transparent; color: var(--text-secondary); font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 8px; border-radius: 8px; cursor: pointer; }
+  .mode-toggle__btn.is-active { background: var(--bg-elevated); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+  .mode-toggle__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .target-picker { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .target-picker label { font-size: 12px; color: var(--text-secondary); }
+  .target-picker__inputs { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .target-picker__inputs input { width: 56px; text-align: center; font-family: var(--font-mono); font-size: 16px; padding: 6px 4px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .target-picker__inputs span { color: var(--text-secondary); font-size: 13px; }
+  .readout { text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: clamp(48px, 15vw, 72px); font-weight: 600; letter-spacing: 0.01em; color: var(--text); line-height: 1; padding: 8px 0; }
+  .readout.is-running { color: var(--accent); }
+  .readout.is-ending { animation: flash 1s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .readout.is-ending { animation: none; } }
+  @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .label-input { width: 100%; font-family: inherit; font-size: 15px; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .label-input:disabled { opacity: 0.7; }
+  .controls { display: flex; gap: 10px; }
+  .btn { flex: 1; font-family: inherit; font-size: 15px; font-weight: 600; padding: 13px 14px; border-radius: 10px; border: 1px solid transparent; cursor: pointer; min-height: 46px; }
+  .btn--primary { background: var(--accent); color: var(--accent-contrast); }
+  .btn--ghost { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn--danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+  .btn:focus-visible, .mode-toggle__btn:focus-visible, .btn-link:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .stats { display: flex; flex-direction: column; gap: 12px; }
+  .stats-group__label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin: 0 0 6px 2px; }
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat-tile { padding: 14px 10px; text-align: center; }
+  .stat-tile__value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 700; }
+  .stat-tile__label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-top: 4px; }
+
+  .sessions { padding: 16px 16px 6px; }
+  .sessions__header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
+  .sessions__header h2 { font-size: 14px; margin: 0; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+  .sessions__actions { display: flex; gap: 14px; }
+  .btn-link { background: none; border: none; color: var(--text-secondary); font-family: inherit; font-size: 12.5px; cursor: pointer; padding: 4px 0; text-decoration: underline; text-underline-offset: 2px; }
+  .file-label { display: inline-flex; }
+
+  .session-list { display: flex; flex-direction: column; }
+  .session-row { display: flex; align-items: center; gap: 10px; padding: 12px 2px; border-top: 1px solid var(--border); }
+  .session-row__dir { font-family: var(--font-mono); color: var(--text-secondary); width: 16px; text-align: center; flex: none; }
+  .session-row__main { flex: 1; min-width: 0; }
+  .session-row__label { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-row__meta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .day-header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 14px 2px 4px; }
+  .day-header:first-child { padding-top: 2px; }
+  .day-header__label { font-size: 12.5px; font-weight: 700; color: var(--text); }
+  .day-header__summary { font-size: 11.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .conflict-chip { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--warn); background: var(--warn-soft); border-radius: 5px; padding: 2px 5px; margin-left: 6px; }
+  .session-row__duration { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; flex: none; }
+  .session-row__actions { display: flex; gap: 4px; flex: none; }
+  .icon-btn { background: none; border: none; color: var(--text-secondary); font-size: 16px; padding: 6px; cursor: pointer; border-radius: 8px; line-height: 1; }
+  .icon-btn:hover { background: var(--bg); }
+  .empty-state { color: var(--text-secondary); font-size: 13.5px; padding: 10px 2px 16px; }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(10, 11, 13, 0.5); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
+  @media (min-width: 560px) { .modal-overlay { align-items: center; padding: 20px; } }
+  .modal { background: var(--bg-elevated); width: 100%; max-width: 480px; border-radius: 18px 18px 0 0; padding: 20px; display: flex; flex-direction: column; gap: 12px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow); }
+  @media (min-width: 560px) { .modal { border-radius: var(--radius); } }
+  .modal h2 { margin: 0 0 4px; font-size: 17px; }
+  .modal label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--text-secondary); flex: 1; }
+  .modal input, .modal select { font-family: inherit; font-size: 15px; padding: 10px 11px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .modal__row { display: flex; gap: 10px; }
+  .modal__computed { font-size: 13px; color: var(--text-secondary); margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .modal__conflict { background: var(--warn-soft); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; color: var(--text); }
+  .modal__conflict strong { color: var(--warn); }
+  .modal__actions { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; gap: 10px; }
+  .modal__actions-right { display: flex; gap: 8px; }
+  .modal__actions .btn { flex: none; padding: 11px 16px; }
+
+  .banner { font-size: 12.5px; color: var(--text); background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .banner button { flex: none; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="app__header">
+    <div class="brand"><span class="brand__mark"></span><h1 class="brand__name">Timekeeper</h1></div>
+    <div class="sync-pill" id="syncPill" data-state="not_connected"><span class="sync-pill__dot"></span><span id="syncPillText">Local only</span></div>
+  </header>
+
+  <section class="card setup-card" id="setupCard" hidden>
+    <h2>Set up Drive sync</h2>
+    <p>Paste the OAuth Client ID from your Google Cloud project (see the setup steps you were given). It's stored only in this browser.</p>
+    <div class="row">
+      <input type="text" id="clientIdInput" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">
+      <button type="button" class="btn btn--primary" id="btnSaveClientId" style="flex:none;">Save</button>
+    </div>
+  </section>
+
+  <div class="banner" id="driveBanner" hidden>
+    <span id="driveBannerText"></span>
+    <button type="button" class="btn btn--ghost" id="driveBannerAction" hidden></button>
+  </div>
+
+  <section class="card timer-card" aria-label="Timer">
+    <div class="mode-toggle" role="tablist">
+      <button type="button" class="mode-toggle__btn is-active" data-mode="up" id="btnModeUp">Stopwatch</button>
+      <button type="button" class="mode-toggle__btn" data-mode="down" id="btnModeDown">Countdown</button>
+    </div>
+    <div class="target-picker" id="targetPicker" hidden>
+      <label for="targetMin">Set</label>
+      <div class="target-picker__inputs">
+        <input type="number" id="targetMin" min="0" max="999" value="5" inputmode="numeric"><span>m</span>
+        <input type="number" id="targetSec" min="0" max="59" value="0" inputmode="numeric"><span>s</span>
+      </div>
+    </div>
+    <div class="readout" id="readout">00:00</div>
+    <input type="text" id="labelInput" class="label-input" placeholder="Add a label (optional)" maxlength="120">
+    <div class="controls" id="controls">
+      <button type="button" class="btn btn--primary" id="btnStart">Start</button>
+    </div>
+  </section>
+
+  <section class="stats" aria-label="Statistics">
+    <div class="stats-group">
+      <h3 class="stats-group__label">Past 7 days</h3>
+      <div class="stats-row">
+        <div class="card stat-tile"><div class="stat-tile__value" id="statCount7">0</div><div class="stat-tile__label">Sessions</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statTotal7">0s</div><div class="stat-tile__label">Total time</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statAvg7">0s</div><div class="stat-tile__label">Average</div></div>
+      </div>
+    </div>
+    <div class="stats-group">
+      <h3 class="stats-group__label">Past 30 days</h3>
+      <div class="stats-row">
+        <div class="card stat-tile"><div class="stat-tile__value" id="statCount30">0</div><div class="stat-tile__label">Sessions</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statTotal30">0s</div><div class="stat-tile__label">Total time</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statAvg30">0s</div><div class="stat-tile__label">Average</div></div>
+      </div>
+    </div>
+    <div class="stats-group">
+      <h3 class="stats-group__label">All time</h3>
+      <div class="stats-row">
+        <div class="card stat-tile"><div class="stat-tile__value" id="statCountAll">0</div><div class="stat-tile__label">Sessions</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statTotalAll">0s</div><div class="stat-tile__label">Total time</div></div>
+        <div class="card stat-tile"><div class="stat-tile__value" id="statAvgAll">0s</div><div class="stat-tile__label">Average</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card sessions" aria-label="Session history">
+    <div class="sessions__header">
+      <h2>Sessions</h2>
+      <div class="sessions__actions">
+        <button type="button" class="btn-link" id="btnSyncNow">Sync now</button>
+        <button type="button" class="btn-link" id="btnExport">Export</button>
+        <label class="btn-link file-label">Import<input type="file" id="importFile" accept="application/json" hidden></label>
+      </div>
+    </div>
+    <div class="session-list" id="sessionList"></div>
+    <p class="empty-state" id="emptyState">No sessions yet — start the timer above.</p>
+  </section>
+</div>
+
+<div class="modal-overlay" id="editOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <h2 id="editTitle">Edit session</h2>
+    <label>Label<input type="text" id="editLabel" maxlength="120"></label>
+    <label>Direction
+      <select id="editDirection"><option value="up">Stopwatch (counted up)</option><option value="down">Countdown (counted down)</option></select>
+    </label>
+    <div class="modal__row">
+      <label>Start<input type="datetime-local" id="editStart" step="1"></label>
+      <label>End<input type="datetime-local" id="editEnd" step="1"></label>
+    </div>
+    <p class="modal__computed">Duration: <span id="editDuration">--</span></p>
+    <div class="modal__conflict" id="editConflict" hidden></div>
+    <div class="modal__actions">
+      <button type="button" class="btn btn--danger" id="btnDeleteSession">Delete</button>
+      <div class="modal__actions-right">
+        <button type="button" class="btn btn--ghost" id="btnCancelEdit">Cancel</button>
+        <button type="button" class="btn btn--primary" id="btnSaveEdit">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- constants ----------
+  var STORAGE_KEY = "timekeeper_state_v1";
+  var CLIENT_ID_KEY = "tk_google_client_id";
+  var SCOPE = "https://www.googleapis.com/auth/drive.file";
+  var POLL_MS = 90000;
+  var COMPACT_EVENT_THRESHOLD = 15;
+  var COMPACT_MAX_DAYS = 10;
+  var EPOCH = "1970-01-01T00:00:00Z";
+
+  // ---------- utils ----------
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0, v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+  function nowIso() { return new Date().toISOString(); }
+  function dayKey(iso) {
+    var d = new Date(iso);
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+  function dayHeaderLabel(iso) {
+    var d = new Date(iso);
+    var today = new Date();
+    var yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+    if (dayKey(iso) === dayKey(today)) return "Today";
+    if (dayKey(iso) === dayKey(yesterday)) return "Yesterday";
+    var opts = { weekday: "short", month: "short", day: "numeric" };
+    if (d.getFullYear() !== today.getFullYear()) opts.year = "numeric";
+    return d.toLocaleDateString(undefined, opts);
+  }
+  function formatClock(ms) {
+    var totalSec = Math.max(0, Math.round(ms / 1000));
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = totalSec % 60;
+    if (h > 0) return h + ":" + pad2(m) + ":" + pad2(s);
+    return pad2(m) + ":" + pad2(s);
+  }
+  function formatDuration(seconds) {
+    seconds = Math.max(0, Math.round(seconds || 0));
+    var h = Math.floor(seconds / 3600);
+    var m = Math.floor((seconds % 3600) / 60);
+    var s = seconds % 60;
+    if (h > 0) return h + "h " + pad2(m) + "m " + pad2(s) + "s";
+    if (m > 0) return m + "m " + pad2(s) + "s";
+    return s + "s";
+  }
+  function toDatetimeLocal(iso) {
+    var d = new Date(iso);
+    var offMs = d.getTimezoneOffset() * 60000;
+    var local = new Date(d.getTime() - offMs);
+    return local.toISOString().slice(0, 19);
+  }
+  function fromDatetimeLocal(str) { return new Date(str).toISOString(); }
+  function escapeHtml(s) { var d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+
+  // ---------- local state ----------
+  function defaultState() {
+    return {
+      deviceId: uuid(),
+      deviceName: "Device " + Math.random().toString(36).slice(2, 6).toUpperCase(),
+      sessions: {},
+      lastSnapshotCreatedTime: null,
+      processedFileIds: [],
+      pendingWrites: []
+    };
+  }
+  function loadState() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return defaultState();
+      return Object.assign(defaultState(), JSON.parse(raw));
+    } catch (e) { return defaultState(); }
+  }
+  function persist() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {} }
+  var state = loadState();
+
+  // ---------- session materialization ----------
+  function foldRecord(rec) {
+    if (!rec || !rec.sessionId || typeof rec.revision !== "number") return;
+    var bucket = state.sessions[rec.sessionId];
+    if (!bucket) { bucket = { maxRevision: 0, variants: [] }; state.sessions[rec.sessionId] = bucket; }
+    if (rec.revision > bucket.maxRevision) {
+      bucket.maxRevision = rec.revision;
+      bucket.variants = [rec];
+    } else if (rec.revision === bucket.maxRevision) {
+      var dup = bucket.variants.some(function (v) { return v.deviceId === rec.deviceId && JSON.stringify(v) === JSON.stringify(rec); });
+      if (!dup) bucket.variants.push(rec);
+    }
+  }
+  function pick(bucket) {
+    if (!bucket || !bucket.variants.length) return null;
+    if (bucket.variants.length === 1) return { record: bucket.variants[0], conflict: false, variants: bucket.variants };
+    var sorted = bucket.variants.slice().sort(function (a, b) { return (a.deviceId || "").localeCompare(b.deviceId || ""); });
+    return { record: sorted[0], conflict: true, variants: sorted };
+  }
+  function activeEntries() {
+    return Object.keys(state.sessions).map(function (id) { return pick(state.sessions[id]); })
+      .filter(function (e) { return e && e.record && e.record.op !== "delete"; })
+      .sort(function (a, b) { return new Date(b.record.startedAt) - new Date(a.record.startedAt); });
+  }
+  function nextRevision(sessionId) {
+    var bucket = state.sessions[sessionId];
+    return (bucket ? bucket.maxRevision : 0) + 1;
+  }
+  function queueWrite(record) {
+    foldRecord(record);
+    persist();
+    renderAll();
+    state.pendingWrites.push({ title: "ptevent_" + record.sessionId + "_" + record.revision + ".json", payload: record });
+    persist();
+    flushPendingWrites();
+  }
+
+  // ---------- Google OAuth + Drive REST ----------
+  var accessToken = null;
+  var tokenExpiryMs = 0;
+  var tokenClient = null;
+  var pollTimer = null;
+  var connecting = false;
+
+  function getClientId() { return (localStorage.getItem(CLIENT_ID_KEY) || "").trim(); }
+  function setClientId(id) { localStorage.setItem(CLIENT_ID_KEY, id.trim()); }
+  function hasValidToken() { return !!accessToken && Date.now() < tokenExpiryMs; }
+
+  function setSyncPill(dataState, text) {
+    document.getElementById("syncPill").setAttribute("data-state", dataState);
+    document.getElementById("syncPillText").textContent = text;
+  }
+  function showBanner(text, actionLabel, actionFn) {
+    var b = document.getElementById("driveBanner");
+    var actionBtn = document.getElementById("driveBannerAction");
+    if (!text) { b.hidden = true; return; }
+    document.getElementById("driveBannerText").textContent = text;
+    if (actionLabel) {
+      actionBtn.textContent = actionLabel;
+      actionBtn.hidden = false;
+      actionBtn.onclick = actionFn;
+    } else {
+      actionBtn.hidden = true;
+    }
+    b.hidden = false;
+  }
+
+  function ensureTokenClient() {
+    if (tokenClient) return tokenClient;
+    if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+    var clientId = getClientId();
+    if (!clientId) return null;
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: SCOPE,
+      callback: function (resp) {
+        connecting = false;
+        if (resp.error) {
+          setSyncPill("error", "Not connected");
+          showBanner("Couldn't connect to Google Drive (" + resp.error + ").", "Try again", connectDrive);
+          return;
+        }
+        accessToken = resp.access_token;
+        tokenExpiryMs = Date.now() + (parseInt(resp.expires_in, 10) || 3600) * 1000 - 30000;
+        showBanner(null);
+        syncFromDrive();
+        startPolling();
+      }
+    });
+    return tokenClient;
+  }
+  function connectDrive() {
+    var tc = ensureTokenClient();
+    if (!tc) { showSetupIfNeeded(); return; }
+    connecting = true;
+    setSyncPill("syncing", "Connecting…");
+    tc.requestAccessToken({ prompt: "" });
+  }
+
+  function driveFetch(url, options) {
+    options = options || {};
+    options.headers = Object.assign({ Authorization: "Bearer " + accessToken }, options.headers || {});
+    return fetch(url, options).then(function (res) {
+      if (res.status === 401) {
+        accessToken = null; tokenExpiryMs = 0;
+        var err = new Error("unauthorized"); err.status = 401; throw err;
+      }
+      if (!res.ok) {
+        var err2 = new Error("drive_error"); err2.status = res.status; throw err2;
+      }
+      return res;
+    });
+  }
+  function driveSearch(query) {
+    var url = "https://www.googleapis.com/drive/v3/files?" + new URLSearchParams({
+      q: query, fields: "files(id,name,createdTime)", pageSize: "100", spaces: "drive"
+    });
+    return driveFetch(url).then(function (res) { return res.json(); }).then(function (data) { return data.files || []; });
+  }
+  function driveCreateFile(name, obj) {
+    var boundary = "tkboundary" + Date.now();
+    var metadata = { name: name, mimeType: "application/json" };
+    var body =
+      "--" + boundary + "\r\n" +
+      "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+      JSON.stringify(metadata) + "\r\n" +
+      "--" + boundary + "\r\n" +
+      "Content-Type: application/json\r\n\r\n" +
+      JSON.stringify(obj) + "\r\n" +
+      "--" + boundary + "--";
+    var url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,createdTime";
+    return driveFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "multipart/related; boundary=" + boundary },
+      body: body
+    }).then(function (res) { return res.json(); });
+  }
+  function driveDownload(fileId) {
+    return driveFetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media")
+      .then(function (res) { return res.text(); })
+      .then(function (text) { return JSON.parse(text); });
+  }
+
+  function flushPendingWrites() {
+    if (!hasValidToken() || !state.pendingWrites.length) return Promise.resolve();
+    var queue = state.pendingWrites.slice();
+    var chain = Promise.resolve();
+    queue.forEach(function (item) {
+      chain = chain.then(function () {
+        return driveCreateFile(item.title, item.payload).then(function () {
+          state.pendingWrites = state.pendingWrites.filter(function (p) { return p.title !== item.title; });
+          persist();
+        }).catch(function (err) {
+          if (err && err.status === 401) {
+            setSyncPill("not_connected", "Reconnect needed");
+            showBanner("Your Google Drive session expired.", "Reconnect", connectDrive);
+          }
+        });
+      });
+    });
+    return chain;
+  }
+
+  function eventsQuerySince(iso) {
+    return "name contains 'ptevent_' and trashed = false and createdTime > '" + iso + "'";
+  }
+  function writeSnapshot() {
+    if (!hasValidToken()) return Promise.resolve();
+    var payload = { schema: 1, sessions: state.sessions, createdAt: nowIso() };
+    return driveCreateFile("ptsnap_" + Date.now() + ".json", payload).then(function (res) {
+      state.lastSnapshotCreatedTime = res.createdTime || payload.createdAt;
+      state.processedFileIds = [];
+      persist();
+    }).catch(function () {});
+  }
+  function maybeCompact(eventCount) {
+    var dueByCount = eventCount >= COMPACT_EVENT_THRESHOLD;
+    var dueByAge = state.lastSnapshotCreatedTime
+      ? (Date.now() - new Date(state.lastSnapshotCreatedTime).getTime()) / 86400000 >= COMPACT_MAX_DAYS
+      : true;
+    if (dueByCount || dueByAge) return writeSnapshot();
+    return Promise.resolve();
+  }
+
+  function syncFromDrive() {
+    if (!hasValidToken()) { setSyncPill("not_connected", "Not connected"); return Promise.resolve(); }
+    setSyncPill("syncing", "Syncing…");
+    return driveSearch("name contains 'ptsnap_' and trashed = false")
+      .then(function (snaps) {
+        if (!snaps.length) return null;
+        snaps.sort(function (a, b) { return new Date(b.createdTime) - new Date(a.createdTime); });
+        var latest = snaps[0];
+        if (!state.lastSnapshotCreatedTime || new Date(latest.createdTime) > new Date(state.lastSnapshotCreatedTime)) {
+          return driveDownload(latest.id).then(function (data) {
+            if (data && data.sessions) {
+              Object.keys(data.sessions).forEach(function (id) { (data.sessions[id].variants || []).forEach(foldRecord); });
+            }
+            state.lastSnapshotCreatedTime = latest.createdTime;
+            state.processedFileIds = [];
+            persist();
+          });
+        }
+        return null;
+      })
+      .then(function () {
+        var since = state.lastSnapshotCreatedTime || EPOCH;
+        return driveSearch(eventsQuerySince(since));
+      })
+      .then(function (files) {
+        var fresh = files.filter(function (f) { return state.processedFileIds.indexOf(f.id) === -1; });
+        var chain = Promise.resolve();
+        fresh.forEach(function (f) {
+          chain = chain.then(function () {
+            return driveDownload(f.id).then(function (rec) {
+              if (rec && rec.sessionId) foldRecord(rec);
+              state.processedFileIds.push(f.id);
+            }).catch(function () {});
+          });
+        });
+        return chain.then(function () { return files.length; });
+      })
+      .then(function (eventCount) {
+        persist(); renderAll();
+        setSyncPill("synced", "Synced");
+        showBanner(null);
+        return maybeCompact(eventCount);
+      })
+      .then(function () { return flushPendingWrites(); })
+      .catch(function (err) {
+        if (err && err.status === 401) {
+          setSyncPill("not_connected", "Reconnect needed");
+          showBanner("Your Google Drive session expired.", "Reconnect", connectDrive);
+        } else {
+          setSyncPill("error", "Sync hiccup");
+        }
+      });
+  }
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(function () { if (hasValidToken()) syncFromDrive(); }, POLL_MS);
+  }
+
+  function showSetupIfNeeded() {
+    var needsSetup = !getClientId();
+    document.getElementById("setupCard").hidden = !needsSetup;
+    if (needsSetup) { setSyncPill("not_connected", "Local only"); return; }
+    if (!hasValidToken()) {
+      setSyncPill("not_connected", "Not connected");
+      showBanner("Connect Google Drive to sync sessions across your devices.", "Connect", connectDrive);
+    }
+  }
+
+  // ---------- timer engine ----------
+  var timer = { direction: "up", status: "idle", accumulatedMs: 0, segmentStartEpoch: null, firstStartedAt: null, targetMs: 5 * 60000 };
+  var tickTimer = null;
+  function elapsedMs() { return timer.accumulatedMs + (timer.status === "running" ? (Date.now() - timer.segmentStartEpoch) : 0); }
+  function displayMs() { return timer.direction === "down" ? Math.max(0, timer.targetMs - elapsedMs()) : elapsedMs(); }
+  function renderReadout() {
+    var readout = document.getElementById("readout");
+    var ms = displayMs();
+    readout.textContent = formatClock(ms);
+    readout.classList.toggle("is-running", timer.status === "running");
+    readout.classList.toggle("is-ending", timer.direction === "down" && timer.status === "running" && ms <= 10000 && ms > 0);
+    if (timer.direction === "down" && timer.status === "running" && ms <= 0) finishCountdown();
+  }
+  function startTick() { if (!tickTimer) tickTimer = setInterval(renderReadout, 200); }
+  function stopTick() { if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } }
+
+  function updateControls() {
+    var controls = document.getElementById("controls");
+    controls.innerHTML = "";
+    function addBtn(label, id, variant, handler) {
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "btn " + (variant || "btn--ghost"); b.id = id; b.textContent = label;
+      b.addEventListener("click", handler);
+      controls.appendChild(b);
+    }
+    var disableMode = timer.status !== "idle";
+    document.getElementById("btnModeUp").disabled = disableMode;
+    document.getElementById("btnModeDown").disabled = disableMode;
+    document.getElementById("targetPicker").querySelectorAll("input").forEach(function (i) { i.disabled = disableMode; });
+    if (timer.status === "idle") {
+      addBtn("Start", "btnStart", "btn--primary", onStart);
+    } else if (timer.status === "running") {
+      addBtn("Pause", "btnPause", "btn--ghost", onPause);
+      addBtn("Stop & Save", "btnStop", "btn--primary", onStopSave);
+    } else if (timer.status === "paused") {
+      addBtn("Resume", "btnResume", "btn--ghost", onResume);
+      addBtn("Stop & Save", "btnStop", "btn--primary", onStopSave);
+      addBtn("Discard", "btnDiscard", "btn--danger", onDiscard);
+    }
+  }
+  function setMode(dir) {
+    if (timer.status !== "idle") return;
+    timer.direction = dir;
+    document.getElementById("btnModeUp").classList.toggle("is-active", dir === "up");
+    document.getElementById("btnModeDown").classList.toggle("is-active", dir === "down");
+    document.getElementById("targetPicker").hidden = dir !== "down";
+    renderReadout();
+  }
+  function currentTargetMs() {
+    var min = parseInt(document.getElementById("targetMin").value, 10) || 0;
+    var sec = parseInt(document.getElementById("targetSec").value, 10) || 0;
+    return Math.max(0, (min * 60 + sec) * 1000);
+  }
+  function onStart() {
+    if (timer.direction === "down") {
+      timer.targetMs = currentTargetMs();
+      if (timer.targetMs <= 0) return;
+    }
+    timer.accumulatedMs = 0;
+    timer.segmentStartEpoch = Date.now();
+    timer.firstStartedAt = nowIso();
+    timer.status = "running";
+    startTick(); renderReadout(); updateControls();
+  }
+  function onPause() {
+    timer.accumulatedMs = elapsedMs();
+    timer.segmentStartEpoch = null;
+    timer.status = "paused";
+    stopTick(); renderReadout(); updateControls();
+  }
+  function onResume() {
+    timer.segmentStartEpoch = Date.now();
+    timer.status = "running";
+    startTick(); renderReadout(); updateControls();
+  }
+  function onDiscard() { resetTimer(); }
+  function resetTimer() {
+    timer.status = "idle"; timer.accumulatedMs = 0; timer.segmentStartEpoch = null; timer.firstStartedAt = null;
+    stopTick();
+    document.getElementById("readout").classList.remove("is-ending", "is-running");
+    renderReadout(); updateControls();
+  }
+  function saveSession(completed) {
+    var elapsed = elapsedMs();
+    var durationSeconds = Math.round(elapsed / 1000);
+    var label = document.getElementById("labelInput").value.trim();
+    var record = {
+      schema: 1, sessionId: uuid(), revision: 1, deviceId: state.deviceId, deviceName: state.deviceName,
+      op: "upsert", direction: timer.direction, label: label,
+      startedAt: timer.firstStartedAt, endedAt: nowIso(), durationSeconds: durationSeconds,
+      targetDurationSeconds: timer.direction === "down" ? Math.round(timer.targetMs / 1000) : null,
+      completed: timer.direction === "down" ? !!completed : null,
+      editedAt: nowIso()
+    };
+    queueWrite(record);
+    document.getElementById("labelInput").value = "";
+    resetTimer();
+  }
+  function onStopSave() { saveSession(false); }
+  function finishCountdown() {
+    if (navigator.vibrate) { try { navigator.vibrate(200); } catch (e) {} }
+    saveSession(true);
+  }
+
+  // ---------- rendering ----------
+  function fillStatGroup(suffix, entries) {
+    var total = entries.reduce(function (sum, e) { return sum + (e.record.durationSeconds || 0); }, 0);
+    document.getElementById("statCount" + suffix).textContent = entries.length;
+    document.getElementById("statTotal" + suffix).textContent = formatDuration(total);
+    document.getElementById("statAvg" + suffix).textContent = entries.length ? formatDuration(total / entries.length) : "0s";
+  }
+  function renderStats() {
+    var entries = activeEntries();
+    var now = Date.now();
+    var cutoff7 = now - 7 * 86400000;
+    var cutoff30 = now - 30 * 86400000;
+    fillStatGroup("7", entries.filter(function (e) { return new Date(e.record.startedAt).getTime() >= cutoff7; }));
+    fillStatGroup("30", entries.filter(function (e) { return new Date(e.record.startedAt).getTime() >= cutoff30; }));
+    fillStatGroup("All", entries);
+  }
+  function renderSessionList() {
+    var list = document.getElementById("sessionList");
+    var entries = activeEntries();
+    list.innerHTML = "";
+    document.getElementById("emptyState").hidden = entries.length > 0;
+    var currentDayKey = null;
+    entries.forEach(function (entry) {
+      var r = entry.record;
+      var key = dayKey(r.startedAt);
+      if (key !== currentDayKey) {
+        currentDayKey = key;
+        var dayEntries = entries.filter(function (e) { return dayKey(e.record.startedAt) === key; });
+        var dayTotal = dayEntries.reduce(function (sum, e) { return sum + (e.record.durationSeconds || 0); }, 0);
+        var header = document.createElement("div");
+        header.className = "day-header";
+        header.innerHTML =
+          '<span class="day-header__label">' + dayHeaderLabel(r.startedAt) + '</span>' +
+          '<span class="day-header__summary">' + dayEntries.length + (dayEntries.length === 1 ? " session · " : " sessions · ") + formatDuration(dayTotal) + '</span>';
+        list.appendChild(header);
+      }
+      var timeStr = new Date(r.startedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      var hasLabel = !!(r.label && r.label.trim());
+      var titleText = hasLabel ? escapeHtml(r.label) : timeStr;
+      var metaParts = [];
+      if (hasLabel) metaParts.push(timeStr);
+      metaParts.push(r.direction === "down" ? (r.completed === false ? "Countdown · stopped early" : "Countdown") : "Stopwatch");
+      var row = document.createElement("div");
+      row.className = "session-row";
+      row.innerHTML =
+        '<div class="session-row__dir">' + (r.direction === "down" ? "↓" : "↑") + '</div>' +
+        '<div class="session-row__main">' +
+          '<div class="session-row__label">' + titleText + (entry.conflict ? '<span class="conflict-chip">2 versions</span>' : "") + '</div>' +
+          '<div class="session-row__meta">' + metaParts.join(" · ") + '</div>' +
+        '</div>' +
+        '<div class="session-row__duration">' + formatDuration(r.durationSeconds) + '</div>' +
+        '<div class="session-row__actions"><button type="button" class="icon-btn" data-edit="' + r.sessionId + '" aria-label="Edit">✎</button></div>';
+      list.appendChild(row);
+    });
+    list.querySelectorAll("[data-edit]").forEach(function (btn) {
+      btn.addEventListener("click", function () { openEdit(btn.getAttribute("data-edit")); });
+    });
+  }
+  function renderAll() { renderStats(); renderSessionList(); }
+
+  // ---------- edit modal ----------
+  var editingId = null;
+  function openEdit(sessionId) {
+    var entry = pick(state.sessions[sessionId]);
+    if (!entry) return;
+    editingId = sessionId;
+    var r = entry.record;
+    document.getElementById("editLabel").value = r.label || "";
+    document.getElementById("editDirection").value = r.direction;
+    document.getElementById("editStart").value = toDatetimeLocal(r.startedAt);
+    document.getElementById("editEnd").value = toDatetimeLocal(r.endedAt);
+    updateEditDuration();
+    var conflictBox = document.getElementById("editConflict");
+    if (entry.conflict) {
+      conflictBox.hidden = false;
+      conflictBox.innerHTML = "<strong>Synced from " + entry.variants.length + " devices</strong> with different edits. Showing " +
+        escapeHtml(r.deviceName || "one") + "'s version — save to keep it as the one true version.";
+    } else {
+      conflictBox.hidden = true;
+    }
+    document.getElementById("editOverlay").hidden = false;
+  }
+  function closeEdit() { document.getElementById("editOverlay").hidden = true; editingId = null; }
+  function updateEditDuration() {
+    var start = document.getElementById("editStart").value;
+    var end = document.getElementById("editEnd").value;
+    if (!start || !end) { document.getElementById("editDuration").textContent = "--"; return; }
+    var secs = Math.max(0, (new Date(end) - new Date(start)) / 1000);
+    document.getElementById("editDuration").textContent = formatDuration(secs);
+  }
+
+  // ---------- boot & wiring ----------
+  document.getElementById("btnModeUp").addEventListener("click", function () { setMode("up"); });
+  document.getElementById("btnModeDown").addEventListener("click", function () { setMode("down"); });
+  document.getElementById("editStart").addEventListener("input", updateEditDuration);
+  document.getElementById("editEnd").addEventListener("input", updateEditDuration);
+  document.getElementById("btnCancelEdit").addEventListener("click", closeEdit);
+  document.getElementById("editOverlay").addEventListener("click", function (e) { if (e.target === this) closeEdit(); });
+
+  document.getElementById("btnSaveClientId").addEventListener("click", function () {
+    var val = document.getElementById("clientIdInput").value.trim();
+    if (!val) return;
+    setClientId(val);
+    tokenClient = null;
+    showSetupIfNeeded();
+  });
+
+  document.getElementById("btnSaveEdit").addEventListener("click", function () {
+    if (!editingId) return;
+    var start = document.getElementById("editStart").value;
+    var end = document.getElementById("editEnd").value;
+    if (!start || !end) return;
+    var startedAt = fromDatetimeLocal(start);
+    var endedAt = fromDatetimeLocal(end);
+    var durationSeconds = Math.max(0, Math.round((new Date(endedAt) - new Date(startedAt)) / 1000));
+    var prevEntry = pick(state.sessions[editingId]);
+    var prevRecord = prevEntry ? prevEntry.record : {};
+    var record = {
+      schema: 1, sessionId: editingId, revision: nextRevision(editingId),
+      deviceId: state.deviceId, deviceName: state.deviceName, op: "upsert",
+      direction: document.getElementById("editDirection").value,
+      label: document.getElementById("editLabel").value.trim(),
+      startedAt: startedAt, endedAt: endedAt, durationSeconds: durationSeconds,
+      targetDurationSeconds: prevRecord.targetDurationSeconds != null ? prevRecord.targetDurationSeconds : null,
+      completed: prevRecord.completed != null ? prevRecord.completed : null,
+      editedAt: nowIso()
+    };
+    queueWrite(record);
+    closeEdit();
+  });
+
+  document.getElementById("btnDeleteSession").addEventListener("click", function () {
+    if (!editingId) return;
+    var record = { schema: 1, sessionId: editingId, revision: nextRevision(editingId), deviceId: state.deviceId, deviceName: state.deviceName, op: "delete", editedAt: nowIso() };
+    queueWrite(record);
+    closeEdit();
+  });
+
+  document.getElementById("btnSyncNow").addEventListener("click", function () {
+    if (!hasValidToken()) { connectDrive(); return; }
+    syncFromDrive();
+  });
+
+  document.getElementById("btnExport").addEventListener("click", function () {
+    var entries = activeEntries().map(function (e) { return e.record; });
+    var payload = JSON.stringify({ schema: 1, exportedAt: nowIso(), sessions: entries }, null, 2);
+    var blob = new Blob([payload], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "timekeeper-sessions.json"; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("importFile").addEventListener("change", function (e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        (data.sessions || []).forEach(function (s) {
+          var sid = s.sessionId || uuid();
+          var record = Object.assign({}, s, { sessionId: sid, revision: nextRevision(sid), deviceId: state.deviceId, deviceName: state.deviceName, op: "upsert" });
+          queueWrite(record);
+        });
+      } catch (err) {}
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  setMode("up");
+  updateControls();
+  renderReadout();
+  renderAll();
+  showSetupIfNeeded();
+})();
+</script>
+</body>
+</html>
