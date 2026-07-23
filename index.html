@@ -80,6 +80,7 @@
   .readout { text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: clamp(48px, 15vw, 72px); font-weight: 600; letter-spacing: 0.01em; color: var(--text); line-height: 1; padding: 8px 0; }
   .readout.is-running { color: var(--accent); }
   .readout.is-ending { animation: flash 1s ease-in-out infinite; }
+  .readout.is-overtime { color: var(--danger); }
   @media (prefers-reduced-motion: reduce) { .readout.is-ending { animation: none; } }
   @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .label-input { width: 100%; font-family: inherit; font-size: 15px; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
@@ -610,17 +611,24 @@
   }
 
   // ---------- timer engine ----------
-  var timer = { direction: "up", status: "idle", accumulatedMs: 0, segmentStartEpoch: null, firstStartedAt: null, targetMs: 5 * 60000 };
+  var timer = { direction: "up", status: "idle", accumulatedMs: 0, segmentStartEpoch: null, firstStartedAt: null, targetMs: 5 * 60000, bellPlayed: false };
   var tickTimer = null;
   function elapsedMs() { return timer.accumulatedMs + (timer.status === "running" ? (Date.now() - timer.segmentStartEpoch) : 0); }
-  function displayMs() { return timer.direction === "down" ? Math.max(0, timer.targetMs - elapsedMs()) : elapsedMs(); }
+  function displayMs() { return timer.direction === "down" ? Math.abs(timer.targetMs - elapsedMs()) : elapsedMs(); }
   function renderReadout() {
     var readout = document.getElementById("readout");
+    var remaining = timer.direction === "down" ? timer.targetMs - elapsedMs() : null;
+    var overtime = timer.direction === "down" && remaining <= 0;
     var ms = displayMs();
-    readout.textContent = formatClock(ms);
+    readout.textContent = (overtime ? "+" : "") + formatClock(ms);
     readout.classList.toggle("is-running", timer.status === "running");
-    readout.classList.toggle("is-ending", timer.direction === "down" && timer.status === "running" && ms <= 10000 && ms > 0);
-    if (timer.direction === "down" && timer.status === "running" && ms <= 0) finishCountdown();
+    readout.classList.toggle("is-ending", timer.direction === "down" && timer.status === "running" && !overtime && remaining <= 10000);
+    readout.classList.toggle("is-overtime", overtime);
+    if (overtime && timer.status === "running" && !timer.bellPlayed) {
+      timer.bellPlayed = true;
+      playBell();
+      if (navigator.vibrate) { try { navigator.vibrate(200); } catch (e) {} }
+    }
   }
   function startTick() { if (!tickTimer) tickTimer = setInterval(renderReadout, 200); }
   function stopTick() { if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } }
@@ -671,6 +679,7 @@
     timer.segmentStartEpoch = Date.now();
     timer.firstStartedAt = nowIso();
     timer.status = "running";
+    timer.bellPlayed = false;
     startTick(); renderReadout(); updateControls();
   }
   function onPause() {
@@ -686,9 +695,9 @@
   }
   function onDiscard() { resetTimer(); }
   function resetTimer() {
-    timer.status = "idle"; timer.accumulatedMs = 0; timer.segmentStartEpoch = null; timer.firstStartedAt = null;
+    timer.status = "idle"; timer.accumulatedMs = 0; timer.segmentStartEpoch = null; timer.firstStartedAt = null; timer.bellPlayed = false;
     stopTick();
-    document.getElementById("readout").classList.remove("is-ending", "is-running");
+    document.getElementById("readout").classList.remove("is-ending", "is-running", "is-overtime");
     renderReadout(); updateControls();
   }
   function saveSession(completed) {
@@ -707,10 +716,29 @@
     document.getElementById("labelInput").value = "";
     resetTimer();
   }
-  function onStopSave() { saveSession(false); }
-  function finishCountdown() {
-    if (navigator.vibrate) { try { navigator.vibrate(200); } catch (e) {} }
-    saveSession(true);
+  function onStopSave() {
+    var completed = timer.direction === "down" && elapsedMs() >= timer.targetMs;
+    saveSession(completed);
+  }
+  var audioCtx = null;
+  function playBell() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      var now = audioCtx.currentTime;
+      [{ mult: 1, peak: 0.35 }, { mult: 2.4, peak: 0.14 }, { mult: 3.8, peak: 0.08 }].forEach(function (partial) {
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 880 * partial.mult;
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(partial.peak, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 1.7);
+      });
+    } catch (e) {}
   }
 
   // ---------- rendering ----------
